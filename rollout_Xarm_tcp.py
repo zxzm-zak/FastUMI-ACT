@@ -12,6 +12,13 @@ from datetime import date
 import datetime
 from model.utils import *
 from scipy.spatial.transform import Rotation as R
+from xarm_bestman import (
+    XARM_GRIPPER_MAX_POSITION,
+    command_gripper,
+    get_gripper_position,
+    initialize_robot,
+    load_xarm_driver,
+)
 
 cfg = TASK_CONFIG
 policy_config = POLICY_CONFIG
@@ -22,23 +29,15 @@ device = os.environ['DEVICE']
 def parse_args():
     parser = argparse.ArgumentParser(description="Run a TCP ACT policy on an XArm6 robot.")
     parser.add_argument("--task", default="pick_bear_200_tcp")
-    parser.add_argument("--xarm-sdk-dir", default=os.getenv("ACT_XARM_SDK_DIR"))
+    parser.add_argument("--bestman-root", default=os.getenv("ACT_BESTMAN_XARM_ROOT"))
+    parser.add_argument(
+        "--xarm-sdk-dir",
+        default=os.getenv("ACT_XARM_SDK_DIR"),
+        help="Legacy directory containing Bestman_real_xarm6.py.",
+    )
     parser.add_argument("--robot-ip", required=True)
     parser.add_argument("--output-dir", default=os.getenv("ACT_ROLLOUT_DIR"))
     return parser.parse_args()
-
-
-def load_xarm_driver(sdk_dir):
-    if sdk_dir:
-        sys.path.insert(0, sdk_dir)
-    try:
-        from Bestman_real_xarm6 import Bestman_Real_Xarm6
-    except ImportError as error:
-        raise RuntimeError(
-            "Unable to import the XArm6 driver. Set --xarm-sdk-dir or ACT_XARM_SDK_DIR "
-            "to the directory containing Bestman_real_xarm6.py."
-        ) from error
-    return Bestman_Real_Xarm6
 
 
 def calculate_new_pose(x, y, z, quaternion, distance):
@@ -59,9 +58,14 @@ def capture_image(cam):
 if __name__ == "__main__":
     args = parse_args()
     task = args.task
-    Bestman_Real_Xarm6 = load_xarm_driver(args.xarm_sdk_dir)
+    if cfg['state_dim'] != 8 or cfg['action_dim'] != 8:
+        raise RuntimeError(
+            "TCP rollout requires an 8D TCP policy. Set ACT_CONTROL_SPACE=tcp "
+            "before running this script."
+        )
+    Bestman_Real_Xarm6 = load_xarm_driver(args.bestman_root, args.xarm_sdk_dir)
     bestman = Bestman_Real_Xarm6(args.robot_ip, None, None)
-    # bestman.go_home(100) # parameter is distance
+    initialize_robot(bestman)
 
     # load the policy
     ckpt_path = os.path.join(train_cfg['checkpoint_dir'], task, train_cfg['eval_ckpt_name'])
@@ -128,9 +132,8 @@ if __name__ == "__main__":
                 # print('old qpos:',qpos)
 
 
-                a1 = bestman.get_gripper_position()
-                gripper_open_width = bestman.get_gripper_position() / 850
-                distance = - 0.09 + 0.015 * (a1 / 255.0)
+                gripper_open_width = get_gripper_position(bestman) / XARM_GRIPPER_MAX_POSITION
+                distance = -0.09 + 0.015 * gripper_open_width
                 x, y, z, _ = calculate_new_pose(x, y, z, q, distance)
                 qpos = [x, y, z, qx, qy, qz, qw]
                 # print('new qpos:',qpos)
@@ -139,7 +142,7 @@ if __name__ == "__main__":
                 # exit()
                 qpos = qpos + [gripper_open_width]
                 # print('new qpos2:',qpos)
-                qvel = bestman.get_current_joint_velocities()
+                qvel = list(bestman.get_current_joint_velocities()) + [0.0, 0.0]
 
                 # try:
                 image_gopro = capture_image(cam)
@@ -208,9 +211,9 @@ if __name__ == "__main__":
                 q_data = action[3:7]
                 # print(f"q_data: {q_data}, shape: {q_data.shape}")
                 # print(f"quat_action: {quat_action}")
-                a = int((1-action[7]) * 255)
-                a = np.clip(a, 0, 255)
-                current_distance = 0.082 + 0.015 * (a / 255.0)
+                a = (1 - action[7]) * XARM_GRIPPER_MAX_POSITION
+                a = np.clip(a, 0, XARM_GRIPPER_MAX_POSITION)
+                current_distance = 0.082 + 0.015 * (a / XARM_GRIPPER_MAX_POSITION)
                 rotation = R.from_quat(q_data)
                 euler_angles_data = rotation.as_euler('xyz', degrees=True)
                 # print('new qpos3:',xyz_data[0], xyz_data[1] , xyz_data[2], euler_angles_data[0], euler_angles_data[2], euler_angles_data[2] )
@@ -233,7 +236,7 @@ if __name__ == "__main__":
                 )
 
 
-                bestman.gripper_goto(a, wait_motion=False)
+                command_gripper(bestman, a)
 
                 time.sleep(1/8)
                 obs_replay.append(obs)

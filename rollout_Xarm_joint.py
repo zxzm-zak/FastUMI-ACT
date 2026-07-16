@@ -11,6 +11,14 @@ import time
 from datetime import date
 import datetime
 from model.utils import *
+from xarm_bestman import (
+    XARM_GRIPPER_MAX_POSITION,
+    command_gripper,
+    get_gripper_position,
+    initialize_robot,
+    load_xarm_driver,
+    move_arm_to_joint_values,
+)
 
 cfg = TASK_CONFIG
 policy_config = POLICY_CONFIG
@@ -21,23 +29,16 @@ device = os.environ['DEVICE']
 def parse_args():
     parser = argparse.ArgumentParser(description="Run an ACT policy on an XArm6 robot.")
     parser.add_argument("--task", default="unplug_charger_200_with_gripper")
-    parser.add_argument("--xarm-sdk-dir", default=os.getenv("ACT_XARM_SDK_DIR"))
+    parser.add_argument("--bestman-root", default=os.getenv("ACT_BESTMAN_XARM_ROOT"))
+    parser.add_argument(
+        "--xarm-sdk-dir",
+        default=os.getenv("ACT_XARM_SDK_DIR"),
+        help="Legacy directory containing Bestman_real_xarm6.py.",
+    )
     parser.add_argument("--robot-ip", required=True)
     parser.add_argument("--output-dir", default=os.getenv("ACT_ROLLOUT_DIR"))
     return parser.parse_args()
 
-
-def load_xarm_driver(sdk_dir):
-    if sdk_dir:
-        sys.path.insert(0, sdk_dir)
-    try:
-        from Bestman_real_xarm6 import Bestman_Real_Xarm6
-    except ImportError as error:
-        raise RuntimeError(
-            "Unable to import the XArm6 driver. Set --xarm-sdk-dir or ACT_XARM_SDK_DIR "
-            "to the directory containing Bestman_real_xarm6.py."
-        ) from error
-    return Bestman_Real_Xarm6
 
 def capture_image(cam):
     success, frame = cam.read()
@@ -48,9 +49,9 @@ def capture_image(cam):
 if __name__ == "__main__":
     args = parse_args()
     task = args.task
-    Bestman_Real_Xarm6 = load_xarm_driver(args.xarm_sdk_dir)
+    Bestman_Real_Xarm6 = load_xarm_driver(args.bestman_root, args.xarm_sdk_dir)
     bestman = Bestman_Real_Xarm6(args.robot_ip, None, None)
-    # bestman.go_home(100) # parameter is distance
+    initialize_robot(bestman)
 
     # load the policy
     ckpt_path = os.path.join(train_cfg['checkpoint_dir'], task, train_cfg['eval_ckpt_name'])
@@ -107,11 +108,10 @@ if __name__ == "__main__":
 
                 # get real time obs
                 qpos = bestman.get_current_joint_angles()
-                # gripper_open_width = bestman.get_gripper_position()
-                gripper_open_width = bestman.get_gripper_position() / 850
+                gripper_open_width = get_gripper_position(bestman) / XARM_GRIPPER_MAX_POSITION
 
                 qpos = qpos + [gripper_open_width]
-                qvel = bestman.get_current_joint_velocities()
+                qvel = list(bestman.get_current_joint_velocities()) + [0.0]
 
                 # try:
                 image_gopro = capture_image(cam)
@@ -180,19 +180,17 @@ if __name__ == "__main__":
                 # input("pause here")
                 #
                 start_time = time.time()
-                bestman.move_arm_to_joint_angles(action[0:6], wait_for_finish=False)
+                move_arm_to_joint_values(bestman, action[0:6])
                 end_time = time.time()
                 print(f"Arm command time: {end_time - start_time:.6f} s")
                 # a = int((1-action[6]) * 255)
                 # a = np.clip(a, 0, 255)
-                a = action[6] * 850
+                a = action[6] * XARM_GRIPPER_MAX_POSITION
                 start_time = time.time()
-                bestman.gripper_goto(a)
+                command_gripper(bestman, a)
                 end_time = time.time()
                 print(f"Gripper command time: {end_time - start_time:.6f} s")
 
-                # bestman.gripper_goto(int(action[6]))
-                # if t <= 25:
                 time.sleep(1/8)
                 obs_replay.append(obs)
                 action_replay.append(action)

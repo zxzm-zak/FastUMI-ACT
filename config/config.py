@@ -9,6 +9,19 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 USE_DEPTH_ANYTHING = False
 USE_LANG_SAM = False
 ROBOT_TYPE = os.getenv("ACT_ROBOT_TYPE", "XARM6")
+CONTROL_SPACE = os.getenv("ACT_CONTROL_SPACE", "joint").lower()
+
+CONTROL_SPACE_DIMS = {
+    "joint": (7, 7),
+    "tcp": (8, 8),
+}
+if CONTROL_SPACE not in CONTROL_SPACE_DIMS:
+    supported_modes = ", ".join(sorted(CONTROL_SPACE_DIMS))
+    raise ValueError(
+        f"Unsupported ACT_CONTROL_SPACE={CONTROL_SPACE!r}. "
+        f"Supported values: {supported_modes}."
+    )
+STATE_DIM, ACTION_DIM = CONTROL_SPACE_DIMS[CONTROL_SPACE]
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = os.getenv("ACT_DATA_DIR", str(REPOSITORY_ROOT / "data" / "example_task"))
@@ -22,8 +35,8 @@ os.environ["DEVICE"] = device
 TASK_CONFIG = {
     "dataset_dir": DATA_DIR,
     "episode_len": 180,
-    "state_dim": 7,
-    "action_dim": 7,
+    "state_dim": STATE_DIM,
+    "action_dim": ACTION_DIM,
     "cam_width": 1920,
     "cam_height": 1080,
     "camera_names": ["front"],

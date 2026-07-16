@@ -1,9 +1,9 @@
 # ACT for XArm6
 
 This branch packages the XArm6 variant of Action Chunking Transformer (ACT) for
-vision-based robot imitation learning. It keeps the original XArm6 policy
-architecture and training settings: a 7-dimensional joint-and-gripper state,
-60 action queries, and a ResNet-18 visual backbone.
+vision-based robot imitation learning. Joint-space training uses a
+7-dimensional joint-and-gripper state, 60 action queries, and a ResNet-18
+visual backbone.
 
 `smooth_act` is a separate branch in this repository. It is not merged into
 this branch because it has a different 8-dimensional policy head and an
@@ -11,8 +11,9 @@ additional GRU action-refinement head.
 
 ## Installation
 
-Python 3.9 or later and a PyTorch build suitable for the target CUDA version
-are recommended.
+Use a Python version supported by both the selected PyTorch build and the
+BestMan environment. The official BestMan environment currently uses Python
+3.8.
 
 ```bash
 python -m venv .venv
@@ -47,24 +48,55 @@ bash train_ddp_script.sh --task unplug_charger --nproc_per_node 1
 ```
 
 For multi-GPU training, set `--nproc_per_node` to the number of local GPUs.
-The model and data contracts on this branch remain 7-dimensional.
+The default model and data contracts on this branch remain 7-dimensional.
+
+For TCP pose policies, the state and action vectors are 8-dimensional
+(position, quaternion, and gripper). Set `ACT_CONTROL_SPACE=tcp` for both
+training and rollout, and use a dataset and checkpoint trained with that
+setting:
+
+```bash
+ACT_CONTROL_SPACE=tcp \
+ACT_DATA_DIR=/data/xarm6_tcp \
+ACT_CHECKPOINT_DIR=/runs/act_tcp \
+bash train_ddp_script.sh --task pick_bear_tcp --nproc_per_node 1
+```
 
 ## XArm6 rollout
 
-The XArm6 driver is not bundled. Install or obtain the compatible BestMan XArm
-SDK separately, then explicitly provide both the SDK path and robot address:
+The XArm6 driver is not bundled. This branch supports the official
+[UMI-Robotics/BestMan_Xarm](https://github.com/UMI-Robotics/BestMan_Xarm)
+checkout. Create its environment as documented upstream, then provide the
+checkout root and robot address explicitly:
 
 ```bash
+git clone https://github.com/UMI-Robotics/BestMan_Xarm.git
+conda env create -f BestMan_Xarm/Install/basic_environment.yaml
+conda activate Xarm
+pip install -r requirements.txt
+
 python rollout_Xarm_joint.py \
-  --xarm-sdk-dir /absolute/path/to/RoboticsToolBox \
-  --robot-ip 192.168.1.100 \
+  --bestman-root /absolute/path/to/BestMan_Xarm \
+  --robot-ip <ROBOT_IP> \
   --task unplug_charger \
   --output-dir /absolute/path/to/rollouts
 ```
 
-Use `rollout_Xarm_tcp.py` for TCP control. Rollout commands send physical robot
-commands; verify the workspace, emergency-stop system, camera calibration, and
-joint limits before execution.
+Alternatively set `ACT_BESTMAN_XARM_ROOT` once. The legacy
+`--xarm-sdk-dir` option remains available for a directory containing
+`Bestman_real_xarm6.py` directly. Use TCP control only with its 8-dimensional
+policy contract:
+
+```bash
+ACT_CONTROL_SPACE=tcp python rollout_Xarm_tcp.py \
+  --bestman-root /absolute/path/to/BestMan_Xarm \
+  --robot-ip <ROBOT_IP> \
+  --task pick_bear_tcp \
+  --output-dir /absolute/path/to/rollouts
+```
+
+Rollout commands send physical robot commands; verify the workspace,
+emergency-stop system, camera calibration, and joint limits before execution.
 
 ## Repository layout
 
@@ -78,5 +110,6 @@ joint limits before execution.
 
 This implementation builds on the Action Chunking Transformer (ACT) project.
 The `detr/` source files retain their existing third-party copyright notices.
-Before publishing, the repository maintainer must select a license that is
-compatible with all contributed and third-party code.
+The XArm driver is an external dependency; BestMan_Xarm is not vendored here
+and remains subject to its own MIT license. This repository is released under
+the MIT license in `LICENSE`.
